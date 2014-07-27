@@ -1,0 +1,269 @@
+---
+title: "Human Health and Economic Impacts of Various Weather Events Across the United States: 1996 to 2011"
+output: html_document
+---
+
+##Synopsis
+
+In this analysis, the United States ("U.S.") National Oceanic and Atmospheric Administration's ("NOAA") storm database was used to assess the human health and economic impacts of weather events across the U.S. After downloading the [data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2p), the data were loaded into [R 3.1.1](http://www.r-project.org/) and the [RStudio 0.98.953](http://www.rstudio.com/products/RStudio/) integrated development environment ("IDE"). After conducting some exploratory data analysis and additional online research, the dataset was subset to only include data collected between 1996 and 2011. Data munging was performed to standardize the listed weather event types in the database with the list of Permitted Storm Data Events as outlined in Table 1 of the [Storm Data Preparation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) publication. Human health impacts were assessed by adding the number of injuries and fatalities for each weather event type and economic impacts were assessed by adding the property damage costs and crop damage costs for each weather event type. Based on this analysis, the top 5 weather events (listed in decreasing order) that caused the greatest number of injuries and fatalities are tornadoes, excessive heat, floods, thunderstorm winds, and lightning. Based on this analysis, the top 5 weather events (listed in decreasing order) in terms of economic impacts are floods, hurricanes (typhoons), storm surge/tidal events, tornadoes, and hail. Due to budget and time constraints, additional analysis of this dataset was not performed; should additional resources be procured for this project, subsequent analyses should attempt to identify outliers that may have skewed this analysis and ascertain whether there is are any temporal trends in the number of reported events and/or the types of reported events. 
+
+##Data Processing
+
+
+[R 3.1.1](http://www.r-project.org/) and [RStudio 0.98.953](http://www.rstudio.com/products/RStudio/) were used to create data and figure directories and to download the [data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2p).
+
+```{r}
+dir <- "./data" # data directory
+if (!file.exists(dir)) {dir.create(dir)} # creates a data directory in the working directory if one doesn't already exist
+fig <- "./figures" # figure directory
+if (!file.exists(fig)) {dir.create(fig)} # creates a figure directory in the working directory if one doesn't already exist
+
+if (!("StormData.bz2" %in% list.files(dir))) {
+  fileUrl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+  download.file(fileUrl, 
+                destfile = paste0(dir, "/StormData.bz2"), 
+                mode = "wb") # downloads data from the URL to the data directory
+  }
+```
+
+After downloading the data, the data were read into R using the "read.csv" command. The resulting data.frame was converted into a data.table and saved as an .rds file to speed future loading of the data.
+
+```{r}
+# These commands check whether a package has been installed and loads it. If the package has not been installed, it 
+# is downloaded, installed, and loaded.
+if(!require("data.table")) install.packages("data.table", repos = "http://cran.r-project.org") 
+library(data.table)
+```
+
+```{r cache = TRUE}
+## Checks whether the dataset had previously been saved loaded and saved as an rds file, if so load data from rds file
+if (!("storms.rds") %in% list.files(dir)) {
+  storms <- data.table(read.csv(paste0(dir, "/StormData.bz2"))) # load StormData.bz2 as a data.table
+  storms[, EVTYPE := tolower(as.character(EVTYPE))]
+  setkey(storms, EVTYPE)
+  saveRDS(storms, paste0(dir, "/storms.rds")) # save loaded data as an rds file
+  } else {
+    storms <- readRDS(paste0(dir, "/storms.rds")) # read in data from previously saved rds file
+    }
+```
+
+As part of the initial data exploration, the start date (as encoded by the "BEG_DATE" column) was converted to a standard date format and used to plot a time series chart of the total number of reported weather events on an annual basis. 
+
+```{r}
+## Convert BGN_DATE column to a standard "date" format
+storms[, BGN_DATE := gsub(" 0:00:00", "", BGN_DATE)][, BGN_DATE := as.IDate(BGN_DATE, format = "%m/%d/%Y")][, list(BGN_DATE)]
+
+## Plot a time series of the total number of reported events on an annual basis
+plot(table(year(storms$BGN_DATE)), 
+     xlim = range(year(storms$BGN_DATE)), 
+     ylim = c(0, 75000),
+     type = "l",
+     cex.axis = 0.8,
+     main = paste0("Number of Reported Storm Events Between \n", 
+                   range(year(storms$BGN_DATE))[1], 
+                   " and ", 
+                   range(year(storms$BGN_DATE))[2]),
+     xlab = "Year", 
+     ylab = "Number of Reported Events")
+```
+
+As seen in the figure above, there is a sharp rise in the number of reported weather events beginning in approximately 1996. [Additional research](http://www.ncdc.noaa.gov/stormevents/details.jsp) indicates that prior to 1996, only tornado, thunderstorm wind, and hail events were included in the dataset. As a result, the dataset was subset to only include data from 1996 to 2011. 
+
+```{r results = "hide"}
+## Subset the dataset to only include data from 1996 to 2011. NOTE: Suppressed the output of this chunk to avoid  
+## printing out the 38 columns of the storms and storms_sub data.tables.
+storms[, year := year(BGN_DATE)] 
+setkey(storms, year)
+storms_sub <- storms[J(1996:2011), ]
+```
+
+```{r}
+length(unique(storms_sub$EVTYPE))
+```
+
+After subsetting the dataset, the number of unique event types (as encoded by the "EVTYPE" column) was determined. As seen above, there are `r length(unique(storms_sub$EVTYPE))` unique event types within the subetted data; this value is significantly greater than the 48 Permitted Storm Data Events listed in Table 1 of the [Storm Data Preparation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) publication. This indicates that additional data processing will likely be required for the analysis. As there are so many non-standard storm data event types within the "EVTYPE"" column, additional subsetting of the dataset (based on human health and economic impacts) was conducted prior to standardizing the storm data event types to reduce the number of non-standard storm data event types to a more managable value.
+
+## Results
+
+#### Question 1: *Across the United States, which types of events are most harmful with respect to population health*
+
+To answer the question which types of events are most harmful with respect to population health, number of injuries and fatalities caused by each weather event were added together to determine the overal "health impact" of each weather event. 
+
+```{r}
+## Data processing for human health impacts
+health <- storms_sub[, list(EVTYPE, FATALITIES, INJURIES)] # subset the data.table
+health[, health_impacts := rowSums(.SD, na.rm = TRUE), .SDcols = c("FATALITIES", "INJURIES")]
+```
+
+After calculating the health impact, I subset the dataset again to exclude all events which had no health impacts (i.e., no fatalities or injuries were caused by the weather event), summed the remaining events by event type, and printed out a list of the top 50 event types.
+
+```{r}
+## I examined top 50 event types in terms of human health impacts and attempted to reconcile top 25 event types with the  
+## Permitted Storm Data Events (Section 2.1 of https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf).
+## I used event types 26-50 to refine the event type column e.g., if "hail" and "small hail" present in the top 50
+## event types, I attempted to reconcile the two event types with a single permitted event type (i.e., in this case, hail).
+health[health_impacts != 0][, list("sum_health_impacts" = sum(health_impacts)), 
+                                      by = EVTYPE][order(-sum_health_impacts)][1:50, ]
+```
+
+As seen in the list above, there are several non-standard event types within the top 50 events having the greatest human health impacts. Using the entries in this list and "gsub", the top entries in this list were standardized (e.g., if event types for "hail" and "small hail" were present in the top 50 event types, I attempted to reconcile the two event types with a single permitted event type, in this case, "hail"). The text processing commands below were used to standardize the "EVTYPE" column.
+
+```{r results = "hide"}
+## Standardizing the EVTYPE column. NOTE: Suppressed the output of this chunk to avoid  
+## printing out a summary of the data.table after every call to gsub.
+health[, EVTYPE := gsub("tstm", "thunderstorm", EVTYPE)]
+health[, EVTYPE := gsub("^(?!marine).*thunderstorm.*$", "thunderstorm wind", EVTYPE, perl = TRUE)]
+health[, EVTYPE := gsub("s$", "", EVTYPE)]
+health[, EVTYPE := gsub(".+heat|heat.+", "excessive heat", EVTYPE)]
+health[, EVTYPE := gsub(".*fog.*", "dense fog", EVTYPE)]
+health[, EVTYPE := gsub(".*fire.*", "wildfire", EVTYPE)]
+health[, EVTYPE := gsub(".*hurricane.*", "hurricane (typhoon)", EVTYPE)]
+health[, EVTYPE := gsub(".*extreme.*", "extreme cold / wind chill", EVTYPE)]
+health[, EVTYPE := gsub(".*mix$", "winter weather", EVTYPE)]
+health[, EVTYPE := gsub(".*surf.*|.* sea.*|.*swell", "high surf", EVTYPE)]
+health[, EVTYPE := gsub(".*hail", "hail", EVTYPE)]
+health[, EVTYPE := gsub(".*warm.*", "heat", EVTYPE)]
+health[, EVTYPE := gsub(".*fld$", "flood", EVTYPE)]
+```
+
+After the text processing commands above, the relative positions of the top 25 event types (in terms of human health impacts) ceased to change significantly. At this point, no further modifications were made to the "EVTYPE" column. 
+
+```{r}
+## Calculate the top 25 weather event types having the greatest human health impacts and list them in decreasing order
+top25 <- health[health_impacts != 0][, list("sum_health_impacts" = sum(health_impacts)), 
+                                      by = EVTYPE][order(-sum_health_impacts)][1:25, ]
+
+## The function below is from the help file for ?toupper.
+## This function capitalizes the first letter of each word separated by a " " in a string
+simpleCap <- function(x) { 
+  s <- strsplit(x, " ")[[1]]
+  paste(toupper(substring(s, 1,1)), substring(s, 2),
+      sep="", collapse=" ")
+}
+
+## Plot a dot plot of the top 25 weather event types having the greatest human health impacts 
+dotchart(rev(top25$sum_health_impacts), # rev(x) reverses the order of a vector
+         labels = sapply(rev(top25$EVTYPE), simpleCap),
+         cex = 0.7,
+         xlab = "Number of Injuries and Fatalities",
+         main = "1996 to 2011: Injuries and Fatalities Across the \nUnited States by Weather Event Type")
+```
+
+A dot plot of the top 25 event types between 1996 and 2011 that had the greatest human health impacts across the U.S. is presented above. As can be seen, the top 5 weather events (listed in decreasing order) that caused the greatest number of injuries and fatalities are tornadoes, excessive heat, floods, thunderstorm winds, and lightning.
+
+#### Question 2: *Across the United States, which types of events have the greatest economic consequences?*
+
+To answer the question which types of events had the greatest economic consequences, the property damage estimates and crop damage estimates were added together. Property damage estimates are coded within the "PROPDMG" and "PROPDMGEXP" columns and crop damage estimates are coded within the "CROPDMG" and "CROPDMGEXP" columns. 
+
+```{r}
+## Data processing for costs
+dmg <- storms_sub[, list(EVTYPE, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP)] # subset the data.table
+dmg[, PROPDMGEXP := tolower(PROPDMGEXP)][, CROPDMGEXP := tolower(CROPDMGEXP)] # convert identified columns to lowercase
+```
+
+According to the [Storm Data Preparation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) publication, the damage estimates ("PROPDMG" and "CROPDMG") should be rounded to three significant digits and followed by an alphabetical character ("PROPDMGEXP" and "CROPDMGEXP") signifying the magnitude of the number. In exploring the data, it was noted that in addition to "h", "k", "m", and "b" (signifying hundreds, thousands, millions, and billions, respectively), there were also numeric values between 0 and 9, empty strings (i.e., ""), and other characters such as "+", "-", "?" within the "PROPDMGEXP" and "CROPDMGEXP" columns. An [online publication](http://sciencepolicy.colorado.edu/admin/publication_files/2012.31.pdf) appears to indicate that the numeric values between 0 and 9 may have been damage intervals. The maximum values of each of the damage intervals are:
+
+| Damage Interval   | Maximum Damage   |
+|:---------------:	|---------------:	|
+|        0        	|             NA 	|
+|        1        	|            $50 	|
+|        2        	|           $500 	|
+|        3        	|         $5,000 	|
+|        4        	|        $50,000 	|
+|        5        	|       $500,000 	|
+|        6        	|     $5,000,000 	|
+|        7        	|    $50,000,000 	|
+|        8        	|   $500,000,000 	|
+|        9        	| $5,000,000,000 	|
+
+Using the information above, the property and crop damage estimates were calculated using the code below. In the event that a numeric value was included in the "PROPDMG" or "CROPDMG" columns and a numeric value was also included in the "PROPDMGEXP" and "CROPDMGEXP" columns, the value in the "PROPDMG" or "CROPDMG" column was ignored and the damage interval value was used as the damage estimate. After calculating the individual property and crop damage estimates, they were summed together (removing NAs prior to summing) to obtain the total cost (i.e., economic impact) of each individual weather event. 
+
+```{r}
+## Convert estimated property and crop damage columns by converting the letter factors in the PROPDMGEXP and CROPDMGEXP 
+## columns (i.e., h, k, m, and b) to their respective numeric values (using a damage conversion vector) and 
+## multiplying by the numeric values in the PROPDMG and CROPDMG columns, respectively. This block of code also converts 
+## the numeric damage intervals in the PROPDMGEXP and CROPDMGEXP columns (i.e., 1 through 9) to their respective maximum
+## values as laid out in the publication at: http://sciencepolicy.colorado.edu/admin/publication_files/2012.31.pdf
+## If a numeric value is present in both the XXXXDMG and XXXXDMGEXP columns, it was assumed that the numeric damage 
+## interval in the XXXXDMGEXP column is correct and the value in the XXXXDMG column is ignored.
+## Values of "", "+", "-", "?", and "0" were all coded as NAs. After converting/calculating the property and crop damage,  
+## the total cost of each event is calculated by adding the property damages and the crop damages together.
+dmg_mult <- c("h" = 100, "k" = 1000, "m" = 1000000, "b" = 1000000000) # damage conversion vector
+
+setkey(dmg, PROPDMGEXP) 
+dmg[J(c("h", "k", "m", "b")), prop_cost := PROPDMG * dmg_mult[names(dmg_mult) == PROPDMGEXP]]
+dmg[J(as.character(seq(1, 9, by = 1))), prop_cost := 5 * 10 ^ as.numeric(PROPDMGEXP)]
+
+setkey(dmg, CROPDMGEXP)
+dmg[J(c("h", "k", "m", "b")), crop_cost := CROPDMG * dmg_mult[names(dmg_mult) == CROPDMGEXP]]
+dmg[J(as.character(seq(1, 9, by = 1))), crop_cost := 5 * 10 ^ as.numeric(CROPDMGEXP)]
+dmg[, total_cost := rowSums(.SD, na.rm = TRUE), .SDcols = c("prop_cost", "crop_cost")]
+```
+
+After calculating the total cost, I subset the dataset again to exclude all events which had no economic impacts (i.e., as measured by the property and crop damage estimates), summed the remaining events by event type, and printed out a list of the top 50 event types.
+
+```{r}
+dmg[total_cost != 0][, list("sum_total_cost" = sum(total_cost), "length" = length(total_cost)), 
+                                      by = EVTYPE][order(-sum_total_cost)][1:50, ]
+```
+
+As seen in the list above, there are several non-standard event types within the top 50 events having the greatest economic consequences. Using the entries in this list and "gsub", the top entries in this list were standardized (e.g., if event types for "hail" and "small hail" were present in the top 50 event types, I attempted to reconcile the two event types with a single permitted event type, in this case, "hail"). The text processing commands below were used to standardize the "EVTYPE" column.
+
+```{r results = "hide"}
+## Standardizing the EVTYPE column. NOTE: Suppressed the output of this chunk to avoid  
+## printing out a summary of the data.table after every call to gsub.
+dmg[, EVTYPE := gsub(".*fld$", "flood", EVTYPE)]
+dmg[, EVTYPE := gsub(".*flash.*flood.*", "flash flood", EVTYPE)]
+dmg[, EVTYPE := gsub("cstl", "coastal", EVTYPE)]
+dmg[, EVTYPE := gsub(".*coastal.*flood.*", "coastal flood", EVTYPE)]
+dmg[, EVTYPE := gsub(".*tidal.*flood.*", "coastal flood", EVTYPE)]
+dmg[, EVTYPE := gsub("[^(?!coastal )&^(?!lakeshore )&^(?!flash )].* flood.*$", "flood", EVTYPE, perl = TRUE)]
+dmg[, EVTYPE := gsub("rflood", "flood", EVTYPE)]
+dmg[, EVTYPE := gsub("tstm", "thunderstorm", EVTYPE)]
+dmg[, EVTYPE := gsub("non-thunderstorm wind", "strong wind", EVTYPE)]
+dmg[, EVTYPE := gsub("^(?!marine).*thunderstorm.*$", "thunderstorm wind", EVTYPE, perl = TRUE)]
+dmg[, EVTYPE := gsub("s$", "", EVTYPE)]
+dmg[, EVTYPE := gsub(".*hurricane.*|.*typhoon.*", "hurricane (typhoon)", EVTYPE)]
+dmg[, EVTYPE := gsub(".*storm surge.*", "storm surge / tide", EVTYPE)]
+dmg[, EVTYPE := gsub(".*extreme.*", "extreme cold / wind chill", EVTYPE)]
+dmg[, EVTYPE := gsub(".*hail", "hail", EVTYPE)]
+dmg[, EVTYPE := gsub(".*fire", "wildfire", EVTYPE)]
+dmg[, EVTYPE := gsub(".*freeze.*|.*frost.*", "frost / freeze", EVTYPE)]
+dmg[, EVTYPE := gsub("landslide|mudslide|landslump", "debris flow", EVTYPE)]
+dmg[, EVTYPE := gsub("^(?!freezing).*fog.*$", "dense fog", EVTYPE, perl = TRUE)]
+dmg[, EVTYPE := gsub(".*mix$", "winter weather", EVTYPE)]
+dmg[, EVTYPE := gsub("^(?!extreme).*cold*$|cold/wind chill", "cold / wind chill", EVTYPE, perl = TRUE)]
+dmg[, EVTYPE := gsub("cold/wind chill", "cold / wind chill", EVTYPE)]
+dmg[, EVTYPE := gsub("heavy rain.*", "heavy rain", EVTYPE)]
+dmg[, EVTYPE := gsub("heavy surf.*", "high surf", EVTYPE)]
+dmg[, EVTYPE := gsub("unseasonal rain", "heavy rain", EVTYPE)]
+dmg[, EVTYPE := gsub(".*freezing rain", "sleet", EVTYPE)]
+dmg[, EVTYPE := gsub("^wind", "high wind", EVTYPE)]
+dmg[, EVTYPE := gsub("gusty", "high", EVTYPE)]
+dmg[, EVTYPE := gsub("high wind.*", "high wind", EVTYPE)]
+dmg[, EVTYPE := gsub("^snow$|light snow", "winter weather", EVTYPE)]
+dmg[, EVTYPE := gsub("excessive snow", "heavy snow", EVTYPE)]
+```
+
+After the text processing commands above, the relative positions of the top 25 event types (in terms of economic impacts) ceased to change significantly. At this point, no further modifications were made to the "EVTYPE" column. 
+
+A dot plot of the top 25 event types between 1996 and 2011 that had the greatest economic impacts across the U.S. is presented below. 
+
+```{r}
+dmg_top25 <- dmg[total_cost != 0][, list("sum_total_cost" = sum(total_cost)), 
+                                  by = EVTYPE][order(-sum_total_cost)][1:25, ]
+
+dotchart(rev(dmg_top25$sum_total_cost) / 10 ^ 6,
+         labels = sapply(rev(dmg_top25$EVTYPE), simpleCap),
+         cex = 0.7,
+         xlab = "Estimate Cost (Property Damage and Crop Damage; millions of U.S. dollars)",
+         main = "1996 to 2011: Total Estimated Economic Impact of \nWeather Event Type Across the United States")
+
+```
+
+As can be seen, the top 5 weather events (listed in decreasing order) in terms of economic impacts are floods, hurricanes (typhoons), storm surge/tidal events, tornadoes, and hail. The observation that floods have resulted in greater property and crop damages than hurricanes is somewhat surprising and in conflict with NOAA's peer-refereed 2013 publication entitled [U.S. Billion-Dollar Weather and Climate Disasters: Data Sources, Trends, Accuracy, and Biases](http://www1.ncdc.noaa.gov/pub/data/papers/smith-and-katz-2013.pdf) and may indicate that: 
+
+* some incorrect assumptions and/or calculations may have been made in this analysis; or,
+* there may be outliers present in the dataset.
+
+Due to budget and time constraints, additional investigation of this dataset was not performed. 
